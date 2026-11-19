@@ -70,6 +70,11 @@
     const d = new Date(ts);
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
+  /** 2:13 AM / 11:05 PM */
+  function clock12(ts) {
+    const d = new Date(ts), h = d.getHours();
+    return `${h % 12 || 12}:${pad(d.getMinutes())} ${h < 12 ? 'AM' : 'PM'}`;
+  }
   function keyToDate(key) {
     const [y, m, d] = key.split('-').map(Number);
     return new Date(y, m - 1, d);
@@ -597,10 +602,12 @@
 
   function renderPlanHint() {
     const { periodMin, lapMin, breakMin } = state.settings;
-    const end = Date.now() + periodMin * MIN;
+    const now = Date.now(), end = now + periodMin * MIN;
     const laps = Math.max(1, Math.floor((periodMin + breakMin) / (lapMin + breakMin)));
-    el('planHint').textContent =
-      `${fmtDur(periodMin)} day, ending around ${clock(end)}. That's about ${laps} lap${laps > 1 ? 's' : ''} of ${fmtDur(lapMin)}.`;
+    const when = clock12(end) + (dayKey(end) !== dayKey(now) ? ' tomorrow' : '');
+    const html = `<span>ends <b>${when}</b></span>` +
+      `<span>${fmtDur(periodMin)} day · ~${laps} lap${laps > 1 ? 's' : ''} of ${fmtDur(lapMin)}</span>`;
+    if (el('planHint').innerHTML !== html) el('planHint').innerHTML = html;
   }
 
   function renderHistory() {
@@ -722,6 +729,7 @@
       : `Ended ${clock(s.endedAt)}`;
     if (el('dayLeft').innerHTML !== dl) el('dayLeft').innerHTML = dl;
 
+    if (scr === 'setup') renderPlanHint();
     if (scr !== 'run') {
       document.title = scr === 'reports' ? 'Reports · Lapstimer' : 'Lapstimer';
       return;

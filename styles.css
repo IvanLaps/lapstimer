@@ -155,7 +155,12 @@ h1 { font-size: 22px; letter-spacing: -.01em; }
 .fields { display: grid; gap: 10px; }
 .field { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
 .field-head { font-weight: 700; margin-bottom: 8px; font-size: 14px; }
-.plan-hint { color: var(--muted); text-align: center; font-size: 14px; }
+.setup-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.setup-head h1 { white-space: nowrap; font-size: clamp(19px, 5.6vw, 22px); }
+.plan-hint span { white-space: nowrap; }
+.plan-hint { color: var(--muted); text-align: right; font-size: 13px; line-height: 1.35; }
+.plan-hint span { display: block; }
+.plan-hint b { color: var(--text); font-weight: 700; }
 
 .history h2 { font-size: 15px; color: var(--muted); font-weight: 600; margin: 6px 0 10px; text-transform: uppercase; letter-spacing: .06em; }
 .hist { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 10px 0; border-top: 1px solid var(--line); }
