@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0e1014">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Lapstimer">
+  <title>Lapstimer</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-phase="setup">
+  <div id="app">
+    <header class="topbar">
+      <div class="date" id="dateLabel"></div>
+      <div class="dayleft num" id="dayLeft"></div>
+      <button class="icon-btn" id="fsBtn" aria-label="Full screen" hidden>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" id="fsEnterIcon"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" id="fsExitIcon" hidden><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+      </button>
+      <button class="icon-btn" id="reportsBtn" aria-label="Reports">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" id="reportsIcon"><rect x="4" y="12" width="4" height="8" rx="1"/><rect x="10" y="7" width="4" height="13" rx="1"/><rect x="16" y="3" width="4" height="17" rx="1"/></svg>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" id="closeIcon" hidden><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/></svg>
+      </button>
+      <button class="icon-btn" id="menuBtn" aria-label="Menu">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
+    </header>
+
+    <!-- ============ SETUP ============ -->
+    <section id="setup" class="screen" hidden>
+      <h1>Plan your day</h1>
+      <div class="fields">
+        <div class="field">
+          <div class="field-head">Work period</div>
+          <div class="chips" id="periodChips"></div>
+          <label class="custom">Custom <input id="periodInput" type="number" inputmode="decimal" min="0.25" max="16" step="0.5"> hours</label>
+        </div>
+        <div class="field">
+          <div class="field-head">Lap length</div>
+          <div class="chips" id="lapChips"></div>
+          <label class="custom">Custom <input id="lapInput" type="number" inputmode="numeric" min="1" max="600" step="1"> min</label>
+        </div>
+        <div class="field">
+          <div class="field-head">Break after each lap</div>
+          <div class="chips" id="breakChips"></div>
+          <label class="custom">Custom <input id="breakInput" type="number" inputmode="numeric" min="0" max="120" step="1"> min</label>
+        </div>
+        <div class="field">
+          <div class="field-head">Time to start next lap</div>
+          <div class="chips" id="graceChips"></div>
+          <label class="custom">Custom <input id="graceInput" type="number" inputmode="numeric" min="1" max="600" step="1"> sec</label>
+        </div>
+      </div>
+      <p class="plan-hint" id="planHint"></p>
+      <button class="btn big" id="startDay">Start day</button>
+      <div class="history" id="history"></div>
+    </section>
+
+    <!-- ============ RUN ============ -->
+    <section id="run" class="screen" hidden>
+      <div class="hero">
+        <div class="ring-wrap">
+          <svg class="ring" viewBox="0 0 200 200" aria-hidden="true">
+            <circle class="track" cx="100" cy="100" r="90"/>
+            <circle class="prog" id="ringProg" cx="100" cy="100" r="90"/>
+          </svg>
+          <div class="ring-text">
+            <div class="phase-label" id="phaseLabel"></div>
+            <div class="big num" id="bigTime"></div>
+            <div class="sub num" id="subText"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="side">
+        <div class="totals">
+          <div class="card work" id="cardWork">
+            <div class="card-label">Working</div>
+            <div class="card-val num" id="totWork"></div>
+          </div>
+          <div class="card waste" id="cardWaste">
+            <div class="card-label">Wasting</div>
+            <div class="card-val num" id="totWaste"></div>
+          </div>
+        </div>
+        <div class="meta num" id="metaLine"></div>
+
+        <div class="controls" id="controls"></div>
+
+        <div class="timeline-wrap">
+          <div class="timeline" id="timeline">
+            <div id="tlSegs"></div>
+            <i id="tlLive"></i>
+            <b id="tlNow"></b>
+          </div>
+          <div class="tl-labels num"><span id="tlStart"></span><span id="tlEnd"></span></div>
+        </div>
+
+        <div class="laps" id="laps"></div>
+      </div>
+    </section>
+    <!-- ============ REPORTS ============ -->
+    <section id="reports" class="screen" hidden>
+      <div class="rep-head">
+        <h1>Reports</h1>
+        <div class="seg" id="rangeSeg">
+          <button type="button" data-range="today" aria-pressed="true">Today</button>
+          <button type="button" data-range="7" aria-pressed="false">7 days</button>
+          <button type="button" data-range="30" aria-pressed="false">30 days</button>
+        </div>
+      </div>
+      <div class="tiles" id="repTiles"></div>
+      <div class="panel">
+        <h2 id="repChartTitle">Timeline</h2>
+        <div class="legend"><span style="--c:var(--work)">Working</span><span style="--c:var(--brk)">Break</span><span style="--c:var(--waste)">Wasting</span></div>
+        <div id="repChart"></div>
+      </div>
+      <div class="panel">
+        <h2>Waste by reason</h2>
+        <div id="repReasons"></div>
+      </div>
+      <div class="panel" id="repDaysPanel">
+        <h2>Days</h2>
+        <div class="table-wrap" id="repTable"></div>
+      </div>
+      <div class="panel">
+        <h2>Waste log</h2>
+        <div id="repLog"></div>
+      </div>
+      <div class="row2">
+        <button type="button" class="btn ghost" id="csvDays">Export days (CSV)</button>
+        <button type="button" class="btn ghost" id="csvWaste">Export waste log (CSV)</button>
+      </div>
+    </section>
+  </div>
+
+  <dialog id="reasonDlg">
+    <form method="dialog" class="menu" id="reasonForm">
+      <h2>Why were you wasting time?</h2>
+      <p class="muted num" id="reasonInfo"></p>
+      <div class="chips" id="reasonChips"></div>
+      <input type="text" id="reasonText" class="text-input" placeholder="Other reason..." maxlength="60" autocomplete="off">
+      <textarea id="reasonNote" class="text-input" rows="2" placeholder="Note (optional)" maxlength="300"></textarea>
+      <div class="row2">
+        <button type="button" class="btn ghost" id="reasonCancel">Keep wasting</button>
+        <button type="submit" class="btn" id="reasonOk" disabled>Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="menu">
+    <form method="dialog" class="menu">
+      <h2>Settings</h2>
+      <label class="toggle"><span>Sounds</span><input type="checkbox" id="optSound"></label>
+      <label class="toggle" id="optSilentRow"><span>Ring in silent mode</span><input type="checkbox" id="optSilent"></label>
+      <label class="toggle"><span>Keep screen awake</span><input type="checkbox" id="optWake"></label>
+      <button type="button" class="btn ghost" id="testSound">Test sound</button>
+      <p class="muted diag" id="diag"></p>
+      <p class="muted" id="fsHint" hidden>For full screen on iPhone, tap Share → <b>Add to Home Screen</b> and open Lapstimer from there.</p>
+      <button type="button" class="btn ghost" id="endDayBtn">End day now</button>
+      <button type="button" class="btn danger" id="resetBtn">Reset today</button>
+      <button class="btn" value="close">Close</button>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
