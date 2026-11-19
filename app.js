@@ -23,7 +23,6 @@
   const ACTIVE = new Set(['work', 'paused', 'break', 'grace', 'waste', 'food']);
   const WASTING = new Set(['paused', 'waste']);
   const KIND = { work: 'work', paused: 'waste', waste: 'waste', break: 'brk', grace: 'brk', food: 'food' };
-  const NEXT_LAP_PRESETS = [25, 30, 45, 60, 90];
   const DEFAULT_REASONS = [
     'Phone / social media', 'Unplanned call or meeting', 'Interrupted', 'Lost focus',
     'Tired', 'Food / coffee', 'Personal errand',
@@ -31,16 +30,19 @@
   const NO_REASON = 'No reason given';
   const FOOD_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" class="ico"><path d="M7 3v8M5 3v5a2 2 0 0 0 4 0V3M7 11v10M17 3c-2 1-3 3.5-3 7h3v11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
 
+  // Option chips. Tap selects; hold edits the option's value (saved as a new preset).
   const FIELDS = [
-    { key: 'periodMin', chips: 'periodChips', input: 'periodInput', values: [240, 360, 480, 600],
+    { key: 'periodMin', chips: 'periodChips', values: [240, 360, 480, 600], unit: 'h',
       label: fmtDur, toInput: v => +(v / 60).toFixed(2), fromInput: x => Math.round(x * 60), min: 15, max: 960 },
-    { key: 'lapMin', chips: 'lapChips', input: 'lapInput', values: [25, 45, 60, 90],
+    { key: 'lapMin', chips: 'lapChips', values: [25, 45, 60, 90], unit: 'min',
       label: fmtDur, toInput: v => v, fromInput: Math.round, min: 1, max: 600 },
-    { key: 'breakMin', chips: 'breakChips', input: 'breakInput', values: [5, 10, 15, 20],
+    { key: 'breakMin', chips: 'breakChips', values: [5, 10, 15, 20], unit: 'min',
       label: fmtDur, toInput: v => v, fromInput: Math.round, min: 0, max: 120 },
-    { key: 'graceSec', chips: 'graceChips', input: 'graceInput', values: [5, 10, 30, 60],
+    { key: 'graceSec', chips: 'graceChips', values: [5, 10, 30, 60], unit: 'sec',
       label: v => `${v}s`, toInput: v => v, fromInput: Math.round, min: 1, max: 600 },
   ];
+  const NEXT_FIELD = { key: 'nextLap', values: [25, 30, 45, 60, 90], unit: 'min',
+    label: fmtDur, toInput: v => v, fromInput: Math.round, min: 1, max: 600 };
 
   /* ================= helpers ================= */
   const el = id => document.getElementById(id);
@@ -559,42 +561,116 @@
   let booted = false;
   let screen = null, controlsKey = null, lapsKey = null, segsKey = null, lastPhase = null, lastGraceSec = null;
 
-  function chips(container, values, current, label, onPick) {
-    container.innerHTML = values
-      .map(v => `<button type="button" class="chip" data-v="${v}" aria-pressed="${v === current}">${label(v)}</button>`)
-      .join('');
-    container.onclick = e => {
-      const b = e.target.closest('.chip');
-      if (b) onPick(Number(b.dataset.v));
-    };
+  /** The user's (editable) option list for a field, kept in settings so it carries over to new days. */
+  function presetsFor(f) {
+    const p = state.settings.presets || (state.settings.presets = {});
+    if (!Array.isArray(p[f.key]) || p[f.key].length !== f.values.length) p[f.key] = f.values.slice();
+    return p[f.key];
   }
-  function markChips(container, current) {
-    for (const b of container.querySelectorAll('.chip')) b.setAttribute('aria-pressed', String(Number(b.dataset.v) === current));
+
+  /**
+   * Option chips: tap selects, hold (~0.5s) and release turns the chip into a number field.
+   * The edit starts on release because iOS only opens the keyboard from a touch/click handler.
+   */
+  function editableChips(container, f, getCurrent, onPick) {
+    const list = presetsFor(f);
+    const cur = getCurrent();
+    if (!list.includes(cur)) {
+      // Make sure the current value is one of the options (replace the closest one).
+      let bi = 0;
+      list.forEach((v, i) => { if (Math.abs(v - cur) < Math.abs(list[bi] - cur)) bi = i; });
+      list[bi] = cur;
+      list.sort((a, b) => a - b);
+      save();
+    }
+    const draw = () => {
+      const c = getCurrent();
+      container.innerHTML = list
+        .map((v, i) => `<button type="button" class="chip" data-i="${i}" aria-pressed="${v === c}">${f.label(v)}</button>`)
+        .join('');
+    };
+    draw();
+
+    let timer = null, armed = null, sx = 0, sy = 0, skipClick = false;
+    const disarm = () => {
+      clearTimeout(timer); timer = null;
+      if (armed) { armed.classList.remove('armed'); armed = null; }
+    };
+    container.onpointerdown = e => {
+      const b = e.target.closest('button.chip');
+      if (!b) return;
+      disarm();
+      sx = e.clientX; sy = e.clientY;
+      timer = setTimeout(() => {
+        timer = null;
+        armed = b;
+        b.classList.add('armed');
+        try { navigator.vibrate && navigator.vibrate(15); } catch { /* ignore */ }
+      }, 450);
+    };
+    container.onpointermove = e => { if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) disarm(); };
+    container.onpointercancel = () => { clearTimeout(timer); timer = null; };
+    const release = e => {
+      clearTimeout(timer); timer = null;
+      if (!armed) return;
+      const b = armed;
+      armed = null;
+      b.classList.remove('armed');
+      e.preventDefault();
+      skipClick = true;
+      setTimeout(() => { skipClick = false; }, 400);
+      startEdit(b);
+    };
+    container.ontouchend = release;
+    container.onmouseup = release;
+    container.oncontextmenu = e => e.preventDefault();
+    container.onclick = e => {
+      if (skipClick) { skipClick = false; return; }
+      const b = e.target.closest('button.chip');
+      if (!b) return;
+      onPick(list[Number(b.dataset.i)]);
+      draw();
+    };
+
+    function startEdit(b) {
+      const i = Number(b.dataset.i);
+      const box = document.createElement('span');
+      box.className = 'chip editing';
+      box.innerHTML = `<input class="chip-input" type="text" inputmode="decimal" enterkeyhint="done" autocomplete="off"
+        value="${f.toInput(list[i])}" aria-label="New value in ${f.unit}"><span class="unit">${f.unit}</span>`;
+      b.replaceWith(box);
+      const inp = box.querySelector('input');
+      inp.focus();
+      inp.select();
+      let done = false;
+      const finish = ok => {
+        if (done) return;
+        done = true;
+        const x = parseFloat(String(inp.value).replace(',', '.'));
+        if (ok && Number.isFinite(x) && x > 0) {
+          const nv = clamp(f.fromInput(x), f.min, f.max);
+          if (!list.includes(nv)) { list[i] = nv; list.sort((a, b) => a - b); }
+          save();
+          onPick(nv);
+        }
+        draw();
+      };
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+        else if (e.key === 'Escape') finish(false);
+      });
+      inp.addEventListener('blur', () => finish(true));
+    }
   }
 
   function renderSetup() {
     for (const f of FIELDS) {
-      const v = state.settings[f.key];
-      const input = el(f.input);
-      chips(el(f.chips), f.values, v, f.label, nv => {
+      editableChips(el(f.chips), f, () => state.settings[f.key], nv => {
         state.settings[f.key] = nv;
         if (f.key === 'lapMin') state.nextLapMin = nv;
-        input.value = '';
         save();
-        markChips(el(f.chips), nv);
         renderPlanHint();
       });
-      input.value = f.values.includes(v) ? '' : f.toInput(v);
-      input.oninput = () => {
-        const x = parseFloat(input.value);
-        if (!Number.isFinite(x)) return;
-        const nv = clamp(f.fromInput(x), f.min, f.max);
-        state.settings[f.key] = nv;
-        if (f.key === 'lapMin') state.nextLapMin = nv;
-        save();
-        markChips(el(f.chips), nv);
-        renderPlanHint();
-      };
     }
     renderPlanHint();
     renderHistory();
@@ -641,27 +717,15 @@
       c.innerHTML = `<button class="btn big" data-act="resume" style="background:var(--work)">Back to work</button>`;
     } else if (group === 'pick') {
       c.innerHTML = `<div class="picker">
-          <div class="field-head">Next lap</div>
+          <div class="field-head">Next lap<span class="hint">hold to edit</span></div>
           <div class="chips" id="nextChips"></div>
-          <label class="custom">Custom <input id="nextInput" type="number" inputmode="numeric" min="1" max="600" step="1"> min</label>
         </div>
         <button class="btn big" id="startLapBtn" data-act="startLap"></button>
         <button class="btn ghost food-btn" id="foodBtn" data-act="food">${FOOD_ICON}Food break</button>`;
-      const input = el('nextInput');
-      chips(el('nextChips'), NEXT_LAP_PRESETS, state.nextLapMin, fmtDur, v => {
+      editableChips(el('nextChips'), NEXT_FIELD, () => state.nextLapMin, v => {
         state.nextLapMin = v;
-        input.value = '';
-        markChips(el('nextChips'), v);
         save();
       });
-      input.value = NEXT_LAP_PRESETS.includes(state.nextLapMin) ? '' : state.nextLapMin;
-      input.oninput = () => {
-        const x = parseFloat(input.value);
-        if (!Number.isFinite(x)) return;
-        state.nextLapMin = clamp(Math.round(x), 1, 600);
-        markChips(el('nextChips'), state.nextLapMin);
-        save();
-      };
     } else if (group === 'done') {
       c.innerHTML = `<div class="row2">
         <button class="btn big" data-act="report">View report</button>
