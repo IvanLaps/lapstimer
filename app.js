@@ -8,7 +8,7 @@
   const SEC = 1000, MIN = 60 * SEC, HOUR = 60 * MIN;
   const RING_C = 2 * Math.PI * 90;
 
-  const DEFAULTS = { periodMin: 480, lapMin: 60, breakMin: 15, graceSec: 10, sound: true, wakeLock: true, silentRing: true };
+  const DEFAULTS = { periodMin: 480, lapMin: 60, breakMin: 15, graceSec: 10, sound: true, wakeLock: true, silentRing: true, theme: 'auto' };
 
   // Phases:
   //   setup  – day not started
@@ -17,16 +17,19 @@
   //   break  – break after a lap               (counts as break)
   //   grace  – short window to start next lap  (counts as break)
   //   waste  – nothing started, wasting time   (counts as waste)
+  //   food   – food break, open-ended          (counts as food, not waste;
+  //            if started during a lap, the lap is on hold and resumes after)
   //   done   – day period is over
-  const ACTIVE = new Set(['work', 'paused', 'break', 'grace', 'waste']);
+  const ACTIVE = new Set(['work', 'paused', 'break', 'grace', 'waste', 'food']);
   const WASTING = new Set(['paused', 'waste']);
-  const KIND = { work: 'work', paused: 'waste', waste: 'waste', break: 'brk', grace: 'brk' };
+  const KIND = { work: 'work', paused: 'waste', waste: 'waste', break: 'brk', grace: 'brk', food: 'food' };
   const NEXT_LAP_PRESETS = [25, 30, 45, 60, 90];
   const DEFAULT_REASONS = [
     'Phone / social media', 'Unplanned call or meeting', 'Interrupted', 'Lost focus',
     'Tired', 'Food / coffee', 'Personal errand',
   ];
   const NO_REASON = 'No reason given';
+  const FOOD_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" class="ico"><path d="M7 3v8M5 3v5a2 2 0 0 0 4 0V3M7 11v10M17 3c-2 1-3 3.5-3 7h3v11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
 
   const FIELDS = [
     { key: 'periodMin', chips: 'periodChips', input: 'periodInput', values: [240, 360, 480, 600],
@@ -86,9 +89,9 @@
       phase: 'setup',
       dayStart: null, dayEnd: null, endedAt: null,
       phaseStart: null,
-      lapStart: null, lapTarget: 0, lapWorked: 0, lapPaused: 0,
+      lapStart: null, lapTarget: 0, lapWorked: 0, lapPaused: 0, lapFood: 0,
       nextLapMin: st.lapMin,
-      totals: { work: 0, waste: 0, brk: 0 },
+      totals: { work: 0, waste: 0, brk: 0, food: 0 },
       segs: [],    // timeline: [{k:'work'|'waste'|'brk', a:start, b:end}]
       laps: [],    // [{n, start, end, target, worked, paused, how}]
       wastes: [],  // waste incidents: [{start, end, kind:'pause'|'idle', lap, reason, note}]
@@ -100,7 +103,7 @@
       const raw = JSON.parse(localStorage.getItem(STATE_KEY));
       if (raw && raw.v === 1) {
         const base = freshState(raw.settings);
-        return { ...base, ...raw, settings: base.settings };
+        return { ...base, ...raw, settings: base.settings, totals: { ...base.totals, ...raw.totals } };
       }
     } catch { /* ignore */ }
     return freshState();
@@ -130,7 +133,7 @@
     return {
       date: dayKey(s.dayStart), start: s.dayStart, end: s.endedAt || now, dayEnd: s.dayEnd,
       period: s.dayEnd - s.dayStart, ...tot, laps: s.laps.length,
-      wastes: s.wastes.slice(), segs, live: active,
+      wastes: s.wastes.slice(), segs, live: active, lapList: s.laps.slice(),
     };
   }
   function archive(s) {
@@ -140,6 +143,7 @@
     delete rec.live;
     hist.push(rec);
     try { localStorage.setItem(HIST_KEY, JSON.stringify(hist.slice(-400))); } catch { /* ignore */ }
+    viewIdx = null;
   }
 
   /* ================= time engine ================= */
@@ -160,6 +164,7 @@
     s.totals[k] += d;
     if (s.phase === 'work') s.lapWorked += d;
     if (s.phase === 'paused') s.lapPaused += d;
+    if (s.phase === 'food' && s.lapStart !== null) s.lapFood += d;
     const last = s.segs[s.segs.length - 1];
     if (last && last.k === k && last.b === s.phaseStart) last.b = t;
     else s.segs.push({ k, a: s.phaseStart, b: t });
@@ -180,13 +185,13 @@
   function closeLap(s, t, how) {
     s.laps.push({
       n: s.laps.length + 1, start: s.lapStart, end: t,
-      target: s.lapTarget, worked: s.lapWorked, paused: s.lapPaused, how,
+      target: s.lapTarget, worked: s.lapWorked, paused: s.lapPaused, food: s.lapFood, how,
     });
     s.lapStart = null;
   }
 
   function finishDay(s, t, how) {
-    if (s.phase === 'work' || s.phase === 'paused') closeLap(s, t, how);
+    if (s.lapStart !== null) closeLap(s, t, how);
     s.phase = 'done';
     s.endedAt = t;
   }
@@ -229,6 +234,7 @@
     s.lapTarget = min * MIN;
     s.lapWorked = 0;
     s.lapPaused = 0;
+    s.lapFood = 0;
     s.nextLapMin = min;
     s.phase = 'work';
   }
@@ -369,8 +375,8 @@
   /** Actions that end a wasting phase must be explained first. */
   function needsReason(name) {
     const p = state.phase;
-    if (p === 'paused') return name === 'resume' || name === 'endLap' || name === 'endDay';
-    if (p === 'waste') return name === 'startLap' || name === 'endDay';
+    if (p === 'paused') return name === 'resume' || name === 'endLap' || name === 'endDay' || name === 'food';
+    if (p === 'waste') return name === 'startLap' || name === 'endDay' || name === 'food';
     return false;
   }
 
@@ -398,13 +404,18 @@
         if (s.phase === 'work') { leave(); s.phase = 'paused'; }
         break;
       case 'resume':
-        if (s.phase === 'paused') { leave(); s.phase = 'work'; }
+        if (s.phase === 'paused' || (s.phase === 'food' && s.lapStart !== null)) { leave(); s.phase = 'work'; }
+        break;
+      case 'food':
+        if (['work', 'paused', 'break', 'grace', 'waste'].includes(s.phase)) { leave(); s.phase = 'food'; }
         break;
       case 'endLap':
         if (s.phase === 'work' || s.phase === 'paused') { leave(); closeLap(s, now, 'early'); s.phase = 'break'; }
         break;
       case 'startLap':
-        if (s.phase === 'break' || s.phase === 'grace' || s.phase === 'waste') { leave(); startLap(s, now, s.nextLapMin); }
+        if (s.phase === 'break' || s.phase === 'grace' || s.phase === 'waste' || (s.phase === 'food' && s.lapStart === null)) {
+          leave(); startLap(s, now, s.nextLapMin);
+        }
         break;
       case 'endDay':
         if (ACTIVE.has(s.phase)) { leave(); finishDay(s, now, 'stopped'); }
@@ -465,6 +476,7 @@
       endLap: 'Save & end lap',
       startLap: `Save & start ${fmtDur(state.nextLapMin)} lap`,
       endDay: 'Save & end day',
+      food: 'Save & start food break',
     }[name];
     el('reasonOk').textContent = verb;
     validateReason();
@@ -592,36 +604,42 @@
   }
 
   function renderHistory() {
-    const hist = loadHist().slice(-7).reverse();
+    const all = loadHist();
+    const hist = all.map((h, i) => ({ ...h, i })).slice(-7).reverse();
     if (!hist.length) { el('history').innerHTML = ''; return; }
-    el('history').innerHTML = '<h2>Recent days</h2>' + hist.map(h => {
+    el('history').innerHTML = '<h2>Recent days · tap to open</h2>' + hist.map(h => {
       const P = h.period || 1;
       const w = x => `${clamp(x / P * 100, 0, 100).toFixed(2)}%`;
-      return `<div class="hist">
+      return `<button type="button" class="hist" data-day="${h.i}">
         <div class="hist-top"><span>${dateLabel(h.date)} · ${h.laps} laps</span>
         <span class="num">${short(h.work)} worked · ${short(h.waste)} wasted</span></div>
-        <div class="hist-bar"><i class="work" style="width:${w(h.work)}"></i><i class="brk" style="width:${w(h.brk)}"></i><i class="waste" style="width:${w(h.waste)}"></i></div>
-      </div>`;
+        <div class="hist-bar"><i class="work" style="width:${w(h.work)}"></i><i class="food" style="width:${w(h.food || 0)}"></i><i class="brk" style="width:${w(h.brk)}"></i><i class="waste" style="width:${w(h.waste)}"></i></div>
+      </button>`;
     }).join('');
   }
 
   function buildControls(group) {
     const c = el('controls');
     if (group === 'work') {
-      c.innerHTML = `<div class="row">
+      c.innerHTML = `<div class="row3">
         <button class="btn big" data-act="pause">Pause</button>
+        <button class="btn ghost food-btn" data-act="food">${FOOD_ICON}Food</button>
         <button class="btn ghost" data-act="endLap">End lap</button></div>`;
     } else if (group === 'paused') {
-      c.innerHTML = `<div class="row">
+      c.innerHTML = `<div class="row3">
         <button class="btn big" data-act="resume" style="background:var(--work)">Resume</button>
+        <button class="btn ghost food-btn" data-act="food">${FOOD_ICON}Food</button>
         <button class="btn ghost" data-act="endLap">End lap</button></div>`;
+    } else if (group === 'foodLap') {
+      c.innerHTML = `<button class="btn big" data-act="resume" style="background:var(--work)">Back to work</button>`;
     } else if (group === 'pick') {
       c.innerHTML = `<div class="picker">
           <div class="field-head">Next lap</div>
           <div class="chips" id="nextChips"></div>
           <label class="custom">Custom <input id="nextInput" type="number" inputmode="numeric" min="1" max="600" step="1"> min</label>
         </div>
-        <button class="btn big" id="startLapBtn" data-act="startLap"></button>`;
+        <button class="btn big" id="startLapBtn" data-act="startLap"></button>
+        <button class="btn ghost food-btn" id="foodBtn" data-act="food">${FOOD_ICON}Food break</button>`;
       const input = el('nextInput');
       chips(el('nextChips'), NEXT_LAP_PRESETS, state.nextLapMin, fmtDur, v => {
         state.nextLapMin = v;
@@ -644,35 +662,51 @@
     }
   }
 
-  function renderLaps(s) {
-    if (!s.laps.length) { el('laps').innerHTML = ''; return; }
+  function metaText(tot, laps) {
+    return `Break ${fmt(tot.brk)}` + (tot.food ? ` · Food ${fmt(tot.food)}` : '') +
+      ` · ${laps} lap${laps === 1 ? '' : 's'} done`;
+  }
+
+  function lapsHtml(laps) {
     const tag = { done: 'done', early: 'ended early', day: 'day ended', stopped: 'stopped' };
-    el('laps').innerHTML = `<h2>Laps · ${s.laps.length}</h2>` + s.laps.slice().reverse().map(l => `
+    return `<h2>Laps · ${laps.length}</h2>` + laps.slice().reverse().map(l => `
       <div class="lap num">
         <span class="n">#${l.n}</span>
         <span>${clock(l.start)}–${clock(l.end)}</span>
         <span class="w">${fmt(l.worked)}</span>
-        <span class="d">${fmtDur(l.target / MIN)} lap · ${tag[l.how]}${l.paused ? ` · <span class="bad">${fmt(l.paused)} paused</span>` : ''}</span>
+        <span class="d">${fmtDur(l.target / MIN)} lap · ${tag[l.how]}${l.paused ? ` · <span class="bad">${fmt(l.paused)} paused</span>` : ''}${l.food ? ` · <span class="food-t">${fmt(l.food)} food</span>` : ''}</span>
       </div>`).join('');
+  }
+
+  function renderLaps(s) {
+    el('laps').innerHTML = s.laps.length ? lapsHtml(s.laps) : '';
   }
 
   function render(now) {
     const s = state;
-    document.body.dataset.phase = s.phase;
-    const today = new Date(now);
-    const dlab = `<span class="wd">${today.toLocaleDateString(undefined, { weekday: 'short' })} </span>${today.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
-    if (el('dateLabel').innerHTML !== dlab) el('dateLabel').innerHTML = dlab;
+    const scr = view === 'reports' ? 'reports' : viewIdx !== null ? 'past' : s.phase === 'setup' ? 'setup' : 'run';
+    document.body.dataset.phase = scr === 'past' ? 'done' : s.phase;
+    if (scr !== 'past') {
+      const dlab = dateHtml(dayKey(now));
+      if (el('dateLabel').innerHTML !== dlab) el('dateLabel').innerHTML = dlab;
+    }
 
-    const scr = view === 'reports' ? 'reports' : s.phase === 'setup' ? 'setup' : 'run';
     if (scr !== screen) {
       screen = scr;
-      el('setup').hidden = scr !== 'setup';
-      el('run').hidden = scr !== 'run';
-      el('reports').hidden = scr !== 'reports';
+      for (const id of ['setup', 'run', 'reports', 'past']) el(id).hidden = scr !== id;
       controlsKey = lapsKey = segsKey = null;
       if (scr === 'setup') renderSetup();
       if (scr === 'reports') renderReports(now);
+      if (scr === 'past') renderPast();
+      updateNav();
       window.scrollTo(0, 0);
+      if (slideDir) {
+        const sec = el(scr);
+        sec.classList.remove('slide-l', 'slide-r');
+        void sec.offsetWidth; // restart the animation
+        sec.classList.add(slideDir < 0 ? 'slide-l' : 'slide-r');
+        slideDir = 0;
+      }
     }
     if (s.phase !== lastPhase) {
       lastPhase = s.phase;
@@ -680,6 +714,7 @@
     }
     el('endDayBtn').hidden = !ACTIVE.has(s.phase);
     updateReasonInfo(now);
+    if (scr === 'past') { document.title = 'Past day · Lapstimer'; return; }
 
     const active = ACTIVE.has(s.phase);
     const dl = !s.dayStart ? ''
@@ -735,6 +770,12 @@
         lastGraceSec = secLeft;
         break;
       }
+      case 'food':
+        label = 'Food break';
+        big = fmt(elapsed);
+        sub = s.lapStart !== null ? `lap ${lapN} on hold · ${fmt(lapLeft, 'ceil')} left` : 'not counted as waste';
+        p = s.lapStart !== null ? lapWorked / s.lapTarget : 1;
+        break;
       case 'waste':
         label = 'Wasting time';
         big = fmt(elapsed);
@@ -759,16 +800,18 @@
     el('totWaste').textContent = fmt(tot.waste);
     el('cardWork').classList.toggle('live', s.phase === 'work');
     el('cardWaste').classList.toggle('live', WASTING.has(s.phase));
-    el('metaLine').textContent = `Break ${fmt(tot.brk)} · ${s.laps.length} lap${s.laps.length === 1 ? '' : 's'} done`;
+    el('metaLine').textContent = metaText(tot, s.laps.length);
 
     /* ---- controls ---- */
-    const group = s.phase === 'work' ? 'work' : s.phase === 'paused' ? 'paused' : s.phase === 'done' ? 'done' : 'pick';
+    const group = s.phase === 'work' ? 'work' : s.phase === 'paused' ? 'paused' : s.phase === 'done' ? 'done'
+      : s.phase === 'food' && s.lapStart !== null ? 'foodLap' : 'pick';
     if (group !== controlsKey) { controlsKey = group; buildControls(group); }
     if (group === 'pick') {
       const btn = el('startLapBtn');
       const txt = s.phase === 'break' ? `Skip break · start ${fmtDur(s.nextLapMin)} lap` : `Start ${fmtDur(s.nextLapMin)} lap`;
       if (btn.textContent !== txt) btn.textContent = txt;
       btn.classList.toggle('pulse', s.phase === 'grace' || s.phase === 'waste');
+      el('foodBtn').hidden = s.phase === 'food';
     }
 
     /* ---- timeline ---- */
@@ -813,11 +856,11 @@
         keys.push(dayKey(d));
       }
     }
-    const byDate = new Map(keys.map(k => [k, { date: k, work: 0, waste: 0, brk: 0, laps: 0, wastes: [], sessions: [] }]));
+    const byDate = new Map(keys.map(k => [k, { date: k, work: 0, waste: 0, brk: 0, food: 0, laps: 0, wastes: [], sessions: [] }]));
     for (const r of records) {
       const d = byDate.get(r.date);
       if (!d) continue;
-      d.work += r.work; d.waste += r.waste; d.brk += r.brk; d.laps += r.laps;
+      d.work += r.work; d.waste += r.waste; d.brk += r.brk; d.food += r.food || 0; d.laps += r.laps;
       d.wastes.push(...(r.wastes || []));
       d.sessions.push(r);
     }
@@ -828,9 +871,9 @@
     for (const b of el('rangeSeg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.range === range));
     const days = reportData(now);
     const sum = days.reduce((a, d) => ({
-      work: a.work + d.work, waste: a.waste + d.waste, brk: a.brk + d.brk, laps: a.laps + d.laps,
+      work: a.work + d.work, waste: a.waste + d.waste, brk: a.brk + d.brk, food: a.food + d.food, laps: a.laps + d.laps,
       incidents: a.incidents + d.wastes.length,
-    }), { work: 0, waste: 0, brk: 0, laps: 0, incidents: 0 });
+    }), { work: 0, waste: 0, brk: 0, food: 0, laps: 0, incidents: 0 });
     const activeDays = days.filter(d => d.sessions.length).length;
     const multi = range !== 'today';
 
@@ -839,8 +882,8 @@
     el('repTiles').innerHTML =
       tile('Worked', short(sum.work), multi ? `avg ${short(activeDays ? sum.work / activeDays : 0)} per active day` : `${sum.laps} laps`) +
       tile('Wasted', short(sum.waste), `${sum.incidents} time${sum.incidents === 1 ? '' : 's'}`) +
-      tile('Focus', `${focusPct(sum.work, sum.waste)}%`, 'worked ÷ (worked + wasted)') +
-      tile(multi ? 'Active days' : 'Break', multi ? `${activeDays}/${days.length}` : short(sum.brk), multi ? `${sum.laps} laps total` : 'incl. start windows');
+      tile('Focus', `${focusPct(sum.work, sum.waste)}%`, multi ? `${activeDays}/${days.length} days active · ${sum.laps} laps` : 'worked ÷ (worked + wasted)') +
+      tile('Breaks', short(sum.brk + sum.food), `rest ${short(sum.brk)} · food ${short(sum.food)}`);
 
     /* chart */
     if (multi) {
@@ -872,20 +915,93 @@
     if (multi) {
       const withData = days.filter(d => d.sessions.length).reverse();
       el('repTable').innerHTML = withData.length ? `<table class="days num">
-        <thead><tr><th>Day</th><th>Worked</th><th>Break</th><th>Wasted</th><th>Focus</th><th>Laps</th></tr></thead>
-        <tbody>${withData.map(d => `<tr><td>${keyToDate(d.date).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}</td><td>${short(d.work)}</td><td>${short(d.brk)}</td>
+        <thead><tr><th>Day</th><th>Worked</th><th>Food</th><th>Break</th><th>Wasted</th><th>Focus</th><th>Laps</th></tr></thead>
+        <tbody>${withData.map(d => `<tr><td>${keyToDate(d.date).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}</td><td>${short(d.work)}</td><td>${short(d.food)}</td><td>${short(d.brk)}</td>
           <td>${short(d.waste)}</td><td>${focusPct(d.work, d.waste)}%</td><td>${d.laps}</td></tr>`).join('')}</tbody>
       </table>` : '<div class="empty">No days tracked in this range yet.</div>';
     }
 
     /* waste log */
     const log = days.flatMap(d => d.wastes).sort((a, b) => b.start - a.start);
-    el('repLog').innerHTML = log.length ? log.map(w => `
+    el('repLog').innerHTML = log.length ? wasteRowsHtml(log, multi) : '<div class="empty">Nothing here yet.</div>';
+  }
+
+  function wasteRowsHtml(list, withDate) {
+    return list.map(w => `
       <div class="log-row">
-        <div class="log-top num"><span>${multi ? dateLabel(dayKey(w.start)) + ' · ' : ''}${clock(w.start)}–${clock(w.end)}</span><b>${fmt(w.end - w.start)}</b></div>
+        <div class="log-top num"><span>${withDate ? dateLabel(dayKey(w.start)) + ' · ' : ''}${clock(w.start)}–${clock(w.end)}</span><b>${fmt(w.end - w.start)}</b></div>
         <div class="log-sub">${w.kind === 'pause' ? `Paused in lap ${w.lap}` : 'Idle, no lap started'} · ${esc(w.reason || NO_REASON)}</div>
         ${w.note ? `<div class="log-note">${esc(w.note)}</div>` : ''}
-      </div>`).join('') : '<div class="empty">Nothing here yet.</div>';
+      </div>`).join('');
+  }
+
+  /* ================= past days ================= */
+  let viewIdx = null;   // index into history, or null for the live day
+  let slideDir = 0;
+
+  function dateHtml(key) {
+    const d = keyToDate(key);
+    return `<span class="wd">${d.toLocaleDateString(undefined, { weekday: 'short' })} </span>${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+  }
+
+  /** dir -1 = back in time (previous day), +1 = forward (towards today). */
+  function navDay(dir) {
+    if (view === 'reports') return;
+    const n = loadHist().length;
+    let next = viewIdx;
+    if (dir < 0) {
+      if (!n) return;
+      next = viewIdx === null ? n - 1 : viewIdx > 0 ? viewIdx - 1 : viewIdx;
+    } else {
+      if (viewIdx === null) return;
+      next = viewIdx < n - 1 ? viewIdx + 1 : null;
+    }
+    if (next === viewIdx) return;
+    viewIdx = next;
+    slideDir = dir;
+    screen = null;
+    tick();
+  }
+  function openPast(i) { viewIdx = i; slideDir = -1; screen = null; tick(); }
+  function backToToday() { if (viewIdx !== null) { viewIdx = null; slideDir = 1; screen = null; tick(); } }
+
+  function updateNav() {
+    const n = loadHist().length;
+    const inReports = view === 'reports';
+    el('prevDay').hidden = inReports || !n || viewIdx === 0;
+    el('nextDay').hidden = inReports || viewIdx === null;
+  }
+
+  function renderPast() {
+    const hist = loadHist();
+    const r = hist[viewIdx];
+    if (!r) { viewIdx = null; return; }
+    const period = r.period || 1;
+    const sameDay = hist.filter(h => h.date === r.date).length;
+    const sessionNo = hist.slice(0, viewIdx + 1).filter(h => h.date === r.date).length;
+    const food = r.food || 0;
+
+    el('dateLabel').innerHTML = dateHtml(r.date);
+    el('dayLeft').innerHTML = `${clock(r.start)}–${clock(r.end)}`;
+    el('pastLabel').textContent = sameDay > 1 ? `Session ${sessionNo} of ${sameDay}` : 'Day summary';
+    el('pastBig').textContent = fmt(r.work);
+    el('pastSub').textContent = `worked · ${focusPct(r.work, r.waste)}% focus`;
+    el('pastRing').style.strokeDashoffset = String(RING_C * (1 - clamp(r.work / period, 0, 1)));
+    el('pastWork').textContent = fmt(r.work);
+    el('pastWaste').textContent = fmt(r.waste);
+    el('pastMeta').textContent = metaText({ brk: r.brk, food }, r.laps);
+
+    const pct = t => clamp((t - r.start) / period * 100, 0, 100);
+    el('pastTl').innerHTML = (r.segs || [])
+      .map(g => `<i class="${g.k}" style="left:${pct(g.a)}%;width:${(g.b - g.a) / period * 100}%"></i>`).join('');
+    el('pastStart').textContent = clock(r.start);
+    el('pastEnd').textContent = clock(r.start + period);
+
+    el('pastLaps').innerHTML = r.lapList && r.lapList.length ? lapsHtml(r.lapList)
+      : r.laps ? `<h2>Laps · ${r.laps}</h2><div class="empty">Lap details are only saved for days tracked after this update.</div>`
+      : '<h2>Laps · 0</h2>';
+    const w = (r.wastes || []).slice().sort((a, b) => b.start - a.start);
+    el('pastWastes').innerHTML = w.length ? `<h2>Wasted time · ${w.length}</h2>` + wasteRowsHtml(w, false) : '';
   }
 
   function renderTodayTimelines(day, now) {
@@ -908,7 +1024,7 @@
   }
 
   function renderBarChart(days) {
-    const totalOf = d => d.work + d.brk + d.waste;
+    const totalOf = d => d.work + d.brk + d.food + d.waste;
     const maxMs = Math.max(HOUR, ...days.map(totalOf));
     const step = maxMs <= 4 * HOUR ? HOUR : maxMs <= 10 * HOUR ? 2 * HOUR : 4 * HOUR;
     const top = Math.ceil(maxMs / step) * step;
@@ -916,7 +1032,7 @@
     for (let v = 0; v <= top; v += step) grid += `<div class="gl" style="bottom:${v / top * 100}%"><span>${v / HOUR}h</span></div>`;
     const cols = days.map((d, i) => {
       const t = totalOf(d);
-      const parts = [['waste', d.waste], ['brk', d.brk], ['work', d.work]]
+      const parts = [['waste', d.waste], ['brk', d.brk], ['food', d.food], ['work', d.work]]
         .filter(([, v]) => v > 0)
         .map(([k, v]) => `<i class="${k}" style="flex-grow:${v}"></i>`).join('');
       return `<div class="col" data-i="${i}"><div class="stack" style="height:${t / top * 100}%">${parts}</div></div>`;
@@ -939,6 +1055,7 @@
       colsEl.classList.add('hovering');
       tip.innerHTML = `<b>${dateLabel(d.date)}</b>
         <div><span style="--c:var(--work)">Worked</span><span class="num">${short(d.work)}</span></div>
+        <div><span style="--c:var(--food)">Food</span><span class="num">${short(d.food)}</span></div>
         <div><span style="--c:var(--brk)">Break</span><span class="num">${short(d.brk)}</span></div>
         <div><span style="--c:var(--waste)">Wasted</span><span class="num">${short(d.waste)}</span></div>
         <div><span style="--c:transparent">Focus</span><span class="num">${focusPct(d.work, d.waste)}%</span></div>`;
@@ -973,8 +1090,8 @@
   el('csvDays').addEventListener('click', () => {
     const days = reportData(Date.now()).filter(d => d.sessions.length);
     download(`lapstimer-days-${range}-${dayKey()}.csv`, csv([
-      ['date', 'worked_min', 'break_min', 'wasted_min', 'focus_pct', 'laps', 'waste_count'],
-      ...days.map(d => [d.date, mins(d.work), mins(d.brk), mins(d.waste), focusPct(d.work, d.waste), d.laps, d.wastes.length]),
+      ['date', 'worked_min', 'food_min', 'break_min', 'wasted_min', 'focus_pct', 'laps', 'waste_count'],
+      ...days.map(d => [d.date, mins(d.work), mins(d.food), mins(d.brk), mins(d.waste), focusPct(d.work, d.waste), d.laps, d.wastes.length]),
     ]));
   });
   el('csvWaste').addEventListener('click', () => {
@@ -1008,6 +1125,31 @@
     if (b) request(b.dataset.act);
   });
   el('startDay').addEventListener('click', startDay);
+  el('prevDay').addEventListener('click', () => navDay(-1));
+  el('nextDay').addEventListener('click', () => navDay(1));
+  el('backToday').addEventListener('click', backToToday);
+  el('history').addEventListener('click', e => {
+    const b = e.target.closest('[data-day]');
+    if (b) openPast(Number(b.dataset.day));
+  });
+
+  // Swipe right = previous day, swipe left = next day (towards today).
+  let sw = null;
+  el('app').addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    sw = null;
+    if (e.touches.length !== 1 || view === 'reports' || document.querySelector('dialog[open]')) return;
+    if (t.clientX < 24 || t.clientX > window.innerWidth - 24) return; // leave the system edge gestures alone
+    if (e.target.closest('input, textarea, .chips, .table-wrap, .chart')) return;
+    sw = { x: t.clientX, y: t.clientY, t: Date.now() };
+  }, { passive: true });
+  el('app').addEventListener('touchend', e => {
+    if (!sw) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - sw.x, dy = t.clientY - sw.y, dt = Date.now() - sw.t;
+    sw = null;
+    if (dt < 800 && Math.abs(dx) > 60 && Math.abs(dy) < Math.abs(dx) * 0.6) navDay(dx > 0 ? -1 : 1);
+  }, { passive: true });
   el('reportsBtn').addEventListener('click', () => setView(view === 'reports' ? 'main' : 'reports'));
 
   /* ---- full screen ---- */
@@ -1042,6 +1184,25 @@
   });
 
   const menu = el('menu');
+  /* ---- theme ---- */
+  function applyTheme() {
+    const t = state.settings.theme;
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+    else delete document.documentElement.dataset.theme;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#0e1014';
+    for (const b of el('themeSeg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.themeOpt === t));
+  }
+  el('themeSeg').addEventListener('click', e => {
+    const b = e.target.closest('[data-theme-opt]');
+    if (!b) return;
+    state.settings.theme = b.dataset.themeOpt;
+    save();
+    applyTheme();
+  });
+  matchMedia('(prefers-color-scheme: light)').addEventListener('change', applyTheme);
+  applyTheme();
+
   el('menuBtn').addEventListener('click', () => {
     el('optSound').checked = state.settings.sound;
     el('optWake').checked = state.settings.wakeLock;

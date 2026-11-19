@@ -8,7 +8,9 @@ A phone-first work-lap timer with a **waste-time timer**. Plain HTML/CSS/JS, no 
 2. **Start day:** the first lap starts. When it ends, the break starts, then the start window counts down.
 3. If you don't start a new lap in time, the **waste timer** starts automatically. **Pausing** a lap also counts as waste.
 4. To stop waste time (Start lap, Resume, End lap, End day), you must give a **reason**: pick one or type your own, with an optional note. *Keep wasting* cancels.
-5. The day ends when the period runs out. A new calendar day starts fresh, and finished days go into history.
+5. **Food break** (plum color) is its own category: not waste, and it doesn't lower your focus %. Pressed during a lap, it puts the lap on hold and *Back to work* resumes it. Pressed during a break or while wasting, *Start lap* ends it.
+6. **Past days:** swipe right (or tap ‹ next to the date) to go back a day, and swipe left or tap › to come forward. You can also tap a row under *Recent days*. Each past day shows its totals, timeline, laps and wasted time with reasons.
+7. The day ends when the period runs out. A new calendar day starts fresh, and finished days go into history.
 
 **Reports** (bar-chart icon): Today / 7 days / 30 days, showing worked/wasted/focus totals, hours per day, waste by reason, a per-day table and the waste log. Both can be exported as CSV.
 

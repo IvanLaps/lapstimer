@@ -9,6 +9,13 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Lapstimer">
   <title>Lapstimer</title>
+  <script>
+    // Apply the saved theme before first paint (no flash).
+    try {
+      var st = (JSON.parse(localStorage.getItem('lapstimer.state.v1')) || {}).settings || {};
+      if (st.theme === 'light' || st.theme === 'dark') document.documentElement.dataset.theme = st.theme;
+    } catch (e) {}
+  </script>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -17,7 +24,11 @@
 <body data-phase="setup">
   <div id="app">
     <header class="topbar">
-      <div class="date" id="dateLabel"></div>
+      <div class="daynav">
+        <button class="nav-btn" id="prevDay" aria-label="Previous day" hidden><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></button>
+        <div class="date" id="dateLabel"></div>
+        <button class="nav-btn" id="nextDay" aria-label="Next day" hidden><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></button>
+      </div>
       <div class="dayleft num" id="dayLeft"></div>
       <button class="icon-btn" id="fsBtn" aria-label="Full screen" hidden>
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" id="fsEnterIcon"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
@@ -105,6 +116,37 @@
         <div class="laps" id="laps"></div>
       </div>
     </section>
+    <!-- ============ PAST DAY ============ -->
+    <section id="past" class="screen" hidden>
+      <div class="hero">
+        <div class="ring-wrap">
+          <svg class="ring" viewBox="0 0 200 200" aria-hidden="true">
+            <circle class="track" cx="100" cy="100" r="90"/>
+            <circle class="prog" id="pastRing" cx="100" cy="100" r="90"/>
+          </svg>
+          <div class="ring-text">
+            <div class="phase-label" id="pastLabel"></div>
+            <div class="big num" id="pastBig"></div>
+            <div class="sub num" id="pastSub"></div>
+          </div>
+        </div>
+      </div>
+      <div class="side">
+        <div class="totals">
+          <div class="card work"><div class="card-label">Working</div><div class="card-val num" id="pastWork"></div></div>
+          <div class="card waste"><div class="card-label">Wasting</div><div class="card-val num" id="pastWaste"></div></div>
+        </div>
+        <div class="meta num" id="pastMeta"></div>
+        <div class="timeline-wrap">
+          <div class="timeline" id="pastTl"></div>
+          <div class="tl-labels num"><span id="pastStart"></span><span id="pastEnd"></span></div>
+        </div>
+        <div class="laps" id="pastLaps"></div>
+        <div class="laps" id="pastWastes"></div>
+        <button type="button" class="btn ghost" id="backToday">Back to today</button>
+      </div>
+    </section>
+
     <!-- ============ REPORTS ============ -->
     <section id="reports" class="screen" hidden>
       <div class="rep-head">
@@ -118,7 +160,7 @@
       <div class="tiles" id="repTiles"></div>
       <div class="panel">
         <h2 id="repChartTitle">Timeline</h2>
-        <div class="legend"><span style="--c:var(--work)">Working</span><span style="--c:var(--brk)">Break</span><span style="--c:var(--waste)">Wasting</span></div>
+        <div class="legend"><span style="--c:var(--work)">Working</span><span style="--c:var(--food)">Food</span><span style="--c:var(--brk)">Break</span><span style="--c:var(--waste)">Wasting</span></div>
         <div id="repChart"></div>
       </div>
       <div class="panel">
@@ -157,6 +199,13 @@
   <dialog id="menu">
     <form method="dialog" class="menu">
       <h2>Settings</h2>
+      <div class="toggle"><span>Theme</span>
+        <div class="seg" id="themeSeg">
+          <button type="button" data-theme-opt="auto">Auto</button>
+          <button type="button" data-theme-opt="light">Light</button>
+          <button type="button" data-theme-opt="dark">Dark</button>
+        </div>
+      </div>
       <label class="toggle"><span>Sounds</span><input type="checkbox" id="optSound"></label>
       <label class="toggle" id="optSilentRow"><span>Ring in silent mode</span><input type="checkbox" id="optSilent"></label>
       <label class="toggle"><span>Keep screen awake</span><input type="checkbox" id="optWake"></label>
@@ -165,7 +214,7 @@
       <p class="muted" id="fsHint" hidden>For full screen on iPhone, tap Share → <b>Add to Home Screen</b> and open Lapstimer from there.</p>
       <button type="button" class="btn ghost" id="endDayBtn">End day now</button>
       <button type="button" class="btn danger" id="resetBtn">Reset today</button>
-      <button class="btn" value="close">Close</button>
+      <button class="btn" value="close" autofocus>Close</button>
     </form>
   </dialog>
 
